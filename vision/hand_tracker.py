@@ -1,26 +1,20 @@
 """
-MediaPipe Hands wrapper providing a clean interface for downstream modules.
+MediaPipe Tasks HandLandmarker wrapper providing a clean interface for downstream modules.
 """
 
 from __future__ import annotations
 
-import importlib
-import logging
+import time
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from pathlib import Path
+from typing import Any, Callable, List, Optional
 
 import cv2
+import mediapipe as mp
 
-logger = logging.getLogger(__name__)
+MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "hand_landmarker.task"
 
-try:
-    mp: Optional[Any] = importlib.import_module("mediapipe")
-except ModuleNotFoundError:
-    mp = None
-    logger.warning(
-        "MediaPipe is not installed. Hand tracking will be disabled until you run "
-        "`pip install mediapipe`."
-    )
+_SWAPPED_LABELS = {"Left": "Right", "Right": "Left"}
 
 
 @dataclass
@@ -31,64 +25,84 @@ class HandData:
     handedness: str
 
 
+def result_to_hands(result: Any, mirrored_input: bool) -> List[HandData]:
+    """
+    Convert a HandLandmarkerResult into ``HandData`` objects.
+
+    MediaPipe documents that a horizontally mirrored image inverts the
+    handedness labels, so they are swapped back when ``mirrored_input`` is set.
+    """
+    hands: List[HandData] = []
+    for landmark_list, categories in zip(result.hand_landmarks, result.handedness):
+        label = categories[0].category_name if categories else "Unknown"
+        if mirrored_input:
+            label = _SWAPPED_LABELS.get(label, label)
+        landmarks = [(lm.x, lm.y, lm.z) for lm in landmark_list]
+        hands.append(HandData(landmarks=landmarks, handedness=label))
+    return hands
+
+
+class MonotonicMs:
+    """Strictly increasing millisecond timestamps, as VIDEO mode requires."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._last = -1
+
+    def next(self) -> int:
+        now = int(self._clock() * 1000)
+        if now <= self._last:
+            now = self._last + 1
+        self._last = now
+        return now
+
+
 class HandTracker:
-    """Encapsulates MediaPipe Hands configuration and processing."""
+    """Encapsulates HandLandmarker configuration and processing."""
 
     def __init__(
         self,
         max_num_hands: int = 2,
         detection_confidence: float = 0.2,
+        presence_confidence: float = 0.2,
         tracking_confidence: float = 0.2,
+        mirrored_input: bool = True,
+        model_path: Path = MODEL_PATH,
     ) -> None:
-        self._hands = None
-        self._mp_hands = None
-
-        if mp is None:
-            self._available = False
-            return
-
-        self._mp_hands = mp.solutions.hands
-        self._hands = self._mp_hands.Hands(
-            max_num_hands=max_num_hands,
-            model_complexity=0,
-            min_detection_confidence=detection_confidence,
+        if not Path(model_path).is_file():
+            raise FileNotFoundError(
+                f"Hand model not found at {model_path}. See the README section "
+                "'Hand model' for where to download hand_landmarker.task."
+            )
+        vision = mp.tasks.vision
+        options = vision.HandLandmarkerOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
+            running_mode=vision.RunningMode.VIDEO,
+            num_hands=max_num_hands,
+            min_hand_detection_confidence=detection_confidence,
+            min_hand_presence_confidence=presence_confidence,
             min_tracking_confidence=tracking_confidence,
         )
-        self._available = True
+        self._landmarker = vision.HandLandmarker.create_from_options(options)
+        self._mirrored_input = mirrored_input
+        self._timestamps = MonotonicMs()
 
     def process_frame(self, frame) -> List[HandData]:
         """
-        Run hand detection on the provided frame.
+        Run hand detection on the provided BGR frame.
 
         Returns a list of ``HandData`` objects—one per detected hand.
         """
-        if frame is None or not self._available or self._hands is None:
+        if frame is None:
             return []
-
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        print("Processing frame…")
-        results = self._hands.process(rgb_frame)
-        print("multi_hand_landmarks:", results.multi_hand_landmarks)
-        print("multi_handedness:", results.multi_handedness)
-
-        hand_data: List[HandData] = []
-
-        if results.multi_hand_landmarks and results.multi_handedness:
-            for landmark_list, handedness in zip(
-                results.multi_hand_landmarks, results.multi_handedness
-            ):
-                landmarks = [
-                    (lm.x, lm.y, lm.z) for lm in landmark_list.landmark
-                ]
-                label = handedness.classification[0].label
-                hand_data.append(HandData(landmarks=landmarks, handedness=label))
-
-        return hand_data
+        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        result = self._landmarker.detect_for_video(image, self._timestamps.next())
+        return result_to_hands(result, self._mirrored_input)
 
     def close(self) -> None:
         """Release MediaPipe resources."""
-        if self._hands:
-            self._hands.close()
+        self._landmarker.close()
 
 
 def correct_fingertip(
@@ -107,4 +121,3 @@ def correct_fingertip(
         base[1] + dy * factor,
         base[2] + dz * factor,
     )
-

@@ -7,27 +7,17 @@ from __future__ import annotations
 from typing import Iterable, Optional, Sequence, Tuple, Union
 
 import cv2
-import importlib
+import mediapipe as mp
 
 from vision.hand_tracker import HandData, correct_fingertip
 
 Color = Tuple[int, int, int]
 Point = Tuple[int, int]
 
-try:
-    mp = importlib.import_module("mediapipe")
-    landmark_pb2 = importlib.import_module(
-        "mediapipe.framework.formats.landmark_pb2"
-    )
-    _mp_drawing = mp.solutions.drawing_utils
-    _mp_styles = mp.solutions.drawing_styles
-    _mp_hands = mp.solutions.hands
-except ModuleNotFoundError:
-    mp = None
-    landmark_pb2 = None
-    _mp_drawing = None
-    _mp_styles = None
-    _mp_hands = None
+# Each entry is a Connection dataclass with .start/.end, not a tuple.
+HAND_CONNECTIONS = mp.tasks.vision.HandLandmarksConnections.HAND_CONNECTIONS
+_BONE_COLOR: Color = (255, 255, 255)
+_JOINT_COLOR: Color = (0, 0, 255)
 
 
 def draw_interaction_box(
@@ -42,29 +32,17 @@ def draw_interaction_box(
 
 
 def draw_skeleton(frame, hand: HandData) -> None:
-    """Render MediaPipe's default 21-point hand skeleton."""
-    if (
-        landmark_pb2 is None
-        or _mp_drawing is None
-        or _mp_styles is None
-        or _mp_hands is None
-    ):
-        return
-
-    landmark_list = landmark_pb2.NormalizedLandmarkList()
-    for x, y, z in hand.landmarks:
-        landmark = landmark_list.landmark.add()
-        landmark.x = x
-        landmark.y = y
-        landmark.z = z
-
-    _mp_drawing.draw_landmarks(
-        frame,
-        landmark_list,
-        _mp_hands.HAND_CONNECTIONS,
-        _mp_styles.get_default_hand_landmarks_style(),
-        _mp_styles.get_default_hand_connections_style(),
-    )
+    """Render MediaPipe's 21-point hand skeleton."""
+    frame_height, frame_width = frame.shape[:2]
+    points = [
+        _normalized_to_pixel(point, frame_width, frame_height)
+        for point in hand.landmarks
+    ]
+    for connection in HAND_CONNECTIONS:
+        if connection.start < len(points) and connection.end < len(points):
+            cv2.line(frame, points[connection.start], points[connection.end], _BONE_COLOR, 2)
+    for point in points:
+        cv2.circle(frame, point, 4, _JOINT_COLOR, -1)
 
 
 def draw_hand_landmarks(

@@ -7,7 +7,9 @@ real backend (e.g., ``pyautogui``) in a later iteration.
 
 from __future__ import annotations
 
+import ctypes
 import math
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -17,8 +19,31 @@ try:
     import pyautogui
 
     pyautogui.FAILSAFE = False
+    # pyautogui sleeps PAUSE (default 0.1 s) after every call, which capped
+    # the tracking loop at ~10 fps.
+    pyautogui.PAUSE = 0
 except ImportError:  # pragma: no cover - fallback for environments without UI access
     pyautogui = None
+
+
+def input_permission_ok() -> bool:
+    """
+    On macOS, report whether this process may post mouse events.
+
+    macOS silently drops synthetic input unless the app that launched Python
+    (Terminal, iTerm, VS Code, ...) has Accessibility permission. Always True
+    on other platforms.
+    """
+    if sys.platform != "darwin":
+        return True
+    try:
+        services = ctypes.cdll.LoadLibrary(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+        )
+        services.AXIsProcessTrusted.restype = ctypes.c_bool
+        return bool(services.AXIsProcessTrusted())
+    except (OSError, AttributeError):
+        return True
 
 
 SLOW_THRESHOLD = 12

@@ -9,12 +9,12 @@ helpers. It shows a live preview window that can be exited with the
 
 from __future__ import annotations
 
-import ctypes
 from typing import List, Optional, Tuple
 
 import cv2
+import pyautogui
 
-from control.mouse_controller import MouseController
+from control.mouse_controller import MouseController, input_permission_ok
 from gestures.recognizer import GestureResult, GestureType, recognize_gestures
 from vision.camera import Camera
 from vision.hand_tracker import HandData, HandTracker, correct_fingertip
@@ -140,11 +140,18 @@ def map_interaction_zone_to_screen(
 def main() -> None:
     """Run the capture/processing/render loop."""
     camera = Camera()
-    hand_tracker = HandTracker()
+    # The frame is mirrored before detection (see cv2.flip below).
+    hand_tracker = HandTracker(mirrored_input=True)
     mouse_controller = MouseController()
-    user32 = ctypes.windll.user32
-    screen_width = user32.GetSystemMetrics(0)
-    screen_height = user32.GetSystemMetrics(1)
+    if not input_permission_ok():
+        print(
+            "WARNING: macOS Accessibility permission is missing, so cursor moves and "
+            "clicks will be ignored. Grant it to the app running Python (System "
+            "Settings > Privacy & Security > Accessibility), then restart that app."
+        )
+    # Same coordinate space as pyautogui.moveTo on each OS: points on macOS,
+    # DPI-aware physical pixels on Windows.
+    screen_width, screen_height = pyautogui.size()
 
     interaction_margin = 80
     interaction_enabled = True

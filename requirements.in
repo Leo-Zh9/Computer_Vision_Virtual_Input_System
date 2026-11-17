@@ -1,0 +1,6 @@
+# Direct dependencies. Edit this file, then regenerate the lock:
+#   uv pip compile --universal --python-version 3.12 requirements.in -o requirements.txt
+mediapipe
+# Held below 5 until OpenCV 5 has been checked live on macOS and Windows.
+opencv-contrib-python<5
+pyautogui>=0.9.54
