@@ -4,6 +4,7 @@ Webcam capture helper used by the main application loop.
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Optional
 
 import cv2
@@ -21,7 +22,14 @@ class Camera:
     ) -> None:
         self._capture = cv2.VideoCapture(index)
         if not self._capture.isOpened():
-            raise RuntimeError("Failed to open the default camera.")
+            message = f"Failed to open camera {index}."
+            if sys.platform == "darwin":
+                message += (
+                    " On macOS, the app running Python (Terminal, iTerm, VS Code, ...) "
+                    "needs Camera permission: System Settings > Privacy & Security > "
+                    "Camera. Restart that app after granting it."
+                )
+            raise RuntimeError(message)
 
         self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
